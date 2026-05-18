@@ -186,6 +186,7 @@ tr:hover td{background:var(--gw)}
       <button class="btn btn-ghost" onclick="openImport()">📥 Import CSV</button>
       <button class="btn btn-ghost" onclick="openAdd()">➕ Tambah</button>
       <button class="btn btn-ghost" onclick="exportCSV()">📤 Export CSV</button>
+<button class="btn btn-ghost" onclick="downloadTemplate()">📋 Download Template</button>
       <button class="btn btn-pri" onclick="openConfig()">⚙️ Supabase</button>
     </div>
   </div>
@@ -462,12 +463,18 @@ function arrToObj(arr){
     let tanggal=(r[0]||'').trim();
     let bulan=(r[1]||'').trim();
     let tahun=String(r[2]||'').trim();
-    // Fix missing/undefined bulan & tahun by parsing tanggal (M/D/YYYY)
+    // Normalize numeric bulan (e.g. "5" -> "May")
+    const _numM=parseInt(bulan);
+    if(!isNaN(_numM)&&_numM>=1&&_numM<=12){bulan=MONTHS[_numM-1];}
+    // Fix missing/undefined bulan & tahun by parsing tanggal (format M/D/YYYY)
     if(!bulan||bulan==='undefined'||!tahun||tahun==='undefined'||tahun===''){
       const p=tanggal.split('/');
       if(p.length===3){
-        try{bulan=MONTHS[parseInt(p[0])-1]||bulan;}catch(e){}
-        tahun=p[2]||tahun;
+        try{
+          const _mi=parseInt(p[0])-1;
+          if(_mi>=0&&_mi<=11&&(!bulan||bulan==='undefined'))bulan=MONTHS[_mi];
+          if(!tahun||tahun==='undefined'||tahun==='')tahun=p[2]||tahun;
+        }catch(e){}
       }
     }
     return{
@@ -504,7 +511,7 @@ function sbHeaders(extra){
 function rowToSb(r){
   return{
     tanggal:r.tanggal||'',
-    bulan:r.bulan||'',
+    bulan:(function(){const _b=r.bulan||'';const _n=parseInt(_b);return(!isNaN(_n)&&_n>=1&&_n<=12)?['January','February','March','April','May','June','July','August','September','October','November','December'][_n-1]:_b;})(),
     tahun:String(r.tahun||''),
     customer:r.customer||'',
     case_id:r.caseId||'',
@@ -682,7 +689,7 @@ async function saveConfig(){
       setTimeout(()=>closeM('mConfig'),1500);
     } else {
       // Table empty - upload local data
-      stEl.textContent='📭 Tabel kosong — mengupload '+allData.length+' data lokal ke Supabase...';
+      stEl.textContent='📭 Tabel kosong - mengupload '+allData.length+' data lokal ke Supabase...';
       stEl.style.color='var(--g5)';
       const uploaded=await saveAllToSupabase();
       if(uploaded){
@@ -742,7 +749,7 @@ function applyF(){
   const sr=document.getElementById('fSearch').value.toLowerCase();
   filteredData=allData.filter(d=>{
     if(yr&&String(d.tahun).trim()!==yr)return false;
-    if(mo&&d.bulan.trim()!==mo)return false;
+    if(mo&&(d.bulan||'').trim().toLowerCase()!==mo.toLowerCase())return false;
     if(ag&&d.agent!==ag)return false;
     if(ct&&d.category!==ct)return false;
     if(rt&&String(d.rating)!==rt)return false;
@@ -770,13 +777,13 @@ function updateKPI(){
   const nor=d.filter(r=>r.category==='No Responder').length;
   const exc=d.filter(r=>+r.rating===5).length;
   const rated=d.filter(r=>r.rating&&r.rating!=='');
-  const avgR=rated.length?(rated.reduce((s,r)=>s+(+r.rating||0),0)/rated.length).toFixed(2):'—';
+  const avgR=rated.length?(rated.reduce((s,r)=>s+(+r.rating||0),0)/rated.length).toFixed(2):'-';
   const resp=pro+pas+det;
   // NPS = (Promoters - Detractors) / responded * 100, displayed as integer, no + sign
   const nps=resp>0?Math.round(((pro-det)/resp)*100):0;
   const csat4=d.filter(r=>+r.rating>=4).length;
-  const csatPct=rated.length?((csat4/rated.length)*100).toFixed(1)+'%':'—';
-  const pct=v=>n?((v/n)*100).toFixed(1)+'% dari total':'—';
+  const csatPct=rated.length?((csat4/rated.length)*100).toFixed(1)+'%':'-';
+  const pct=v=>n?((v/n)*100).toFixed(1)+'% dari total':'-';
 
   set('kTotal',n.toLocaleString('id'));
   // NPS: show actual value, no + prefix
@@ -787,20 +794,20 @@ function updateKPI(){
   set('kDet',det.toLocaleString('id'));set('kNo',nor.toLocaleString('id'));set('kExc',exc.toLocaleString('id'));
   // Percentages (shown big, as main KPI value)
   // Promoters/Passives/Detractors: % of total respondents
-  set('kProPct',n?((pro/n)*100).toFixed(1)+'%':'—');
-  set('kPasPct',n?((pas/n)*100).toFixed(1)+'%':'—');
-  set('kDetPct',n?((det/n)*100).toFixed(1)+'%':'—');
-  set('kNoPct',n?((nor/n)*100).toFixed(1)+'%':'—');
-  set('kExcPct',rated.length?((exc/rated.length)*100).toFixed(1)+'%':'—');
-  set('npsSat',resp>0?((pro/resp)*100).toFixed(1)+'%':'—');
+  set('kProPct',n?((pro/n)*100).toFixed(1)+'%':'-');
+  set('kPasPct',n?((pas/n)*100).toFixed(1)+'%':'-');
+  set('kDetPct',n?((det/n)*100).toFixed(1)+'%':'-');
+  set('kNoPct',n?((nor/n)*100).toFixed(1)+'%':'-');
+  set('kExcPct',rated.length?((exc/rated.length)*100).toFixed(1)+'%':'-');
+  set('npsSat',resp>0?((pro/resp)*100).toFixed(1)+'%':'-');
   set('csatPct',csatPct);
   set('csatScore',csatPct);
 
-  // NPS meter — show actual value only
+  // NPS meter - show actual value only
   const npsEl=document.getElementById('npsNum');
   if(npsEl){npsEl.textContent=nps;npsEl.className='nps-big '+(nps>=50?'g':nps>=0?'y':'r');}
-  set('kNPSsub',nps>=50?'🟢 Excellent ≥50':nps>=0?'🟡 Cukup 0–49':'🔴 Perlu Perhatian');
-  set('npsLbl',nps>=50?'🟢 Excellent — Pelanggan sangat loyal':nps>=0?'🟡 Cukup — Ada ruang perbaikan':'🔴 Perlu Perhatian — Banyak Detractors');
+  set('kNPSsub',nps>=50?'🟢 Excellent ≥50':nps>=0?'🟡 Cukup 0-49':'🔴 Perlu Perhatian');
+  set('npsLbl',nps>=50?'🟢 Excellent - Pelanggan sangat loyal':nps>=0?'🟡 Cukup - Ada ruang perbaikan':'🔴 Perlu Perhatian - Banyak Detractors');
   const fillPct=((nps+100)/200)*100;
   const fill=document.getElementById('npsFill');
   if(fill){fill.style.width=fillPct+'%';fill.style.background=nps>=50?'linear-gradient(90deg,var(--gb),var(--gl))':nps>=0?'linear-gradient(90deg,var(--gold),#f5cc60)':'linear-gradient(90deg,var(--red),#f08070)';}
@@ -853,7 +860,7 @@ function updateCharts(){
   document.getElementById('agentCards').innerHTML=Object.entries(agMap).sort((a,b)=>b[1].t-a[1].t).map(([name,v])=>{
     const r2=v.pro+v.pas+v.det;
     const npsA=r2?Math.round(((v.pro-v.det)/r2)*100):0; // actual value, no + sign
-    const avgR=v.cntR?(v.sumR/v.cntR).toFixed(1):'—';
+    const avgR=v.cntR?(v.sumR/v.cntR).toFixed(1):'-';
     return `<div class="agent-card">
       <div class="ac-name">👤 ${name}</div>
       <div class="ac-stat"><span class="lbl">Total</span><span class="val">${v.t.toLocaleString('id')}</span></div>
@@ -886,7 +893,7 @@ function updateCharts(){
       <span class="bar-num" style="color:${s>=0?'var(--gm)':'var(--red)'};font-weight:700">${s}</span>
     </div>`).join('');
 
-  // Trend — fix undefined year/month
+  // Trend - fix undefined year/month
   const tMap={};
   d.forEach(r=>{
     const mo=(r.bulan||'').trim();
@@ -921,11 +928,11 @@ function renderFeed(){
   document.getElementById('commentFeed').innerHTML=latest.length?latest.map(r=>`
     <div class="feed-item ${(r.category||'').toLowerCase().replace(/\s/g,'')}">
       <div class="feed-meta">
-        <span class="feed-name">👤 ${r.customer||'—'}</span>
+        <span class="feed-name">👤 ${r.customer||'-'}</span>
         <div style="display:flex;gap:6px;align-items:center">${catBadge(r.category)}<span class="feed-date">${r.tanggal||''}</span></div>
       </div>
       <div class="feed-txt">${r.comment}</div>
-      <div class="feed-agent">by ${r.agent||'—'} · ${'⭐'.repeat(Math.min(+r.rating||0,5))}</div>
+      <div class="feed-agent">by ${r.agent||'-'} · ${'⭐'.repeat(Math.min(+r.rating||0,5))}</div>
     </div>`).join(''):'<div style="color:var(--g3);text-align:center;padding:20px;font-size:.8rem">Tidak ada komentar</div>';
 }
 
@@ -937,14 +944,14 @@ function renderTable(){
     const gi=allData.indexOf(r);
     return `<tr>
       <td style="color:var(--g3);font-family:DM Mono;font-size:.7rem">${st+i+1}</td>
-      <td style="font-size:.75rem;white-space:nowrap;font-family:DM Mono">${r.tanggal||'—'}</td>
-      <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500" title="${r.customer||''}">${r.customer||'—'}</td>
-      <td style="font-family:DM Mono;font-size:.7rem;color:var(--g5)">${r.caseId||'—'}</td>
+      <td style="font-size:.75rem;white-space:nowrap;font-family:DM Mono">${r.tanggal||'-'}</td>
+      <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500" title="${r.customer||''}">${r.customer||'-'}</td>
+      <td style="font-family:DM Mono;font-size:.7rem;color:var(--g5)">${r.caseId||'-'}</td>
       <td>${'⭐'.repeat(Math.min(+r.rating||0,5))}</td>
-      <td style="font-size:.77rem">${r.agent||'—'}</td>
+      <td style="font-size:.77rem">${r.agent||'-'}</td>
       <td>${catBadge(r.category)}</td>
-      <td style="font-size:.72rem;color:var(--g5)">${r.feedbackCategory||'—'}</td>
-      <td style="font-size:.75rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--g7)" title="${(r.comment||'').replace(/"/g,'&quot;')}">${r.comment||'—'}</td>
+      <td style="font-size:.72rem;color:var(--g5)">${r.feedbackCategory||'-'}</td>
+      <td style="font-size:.75rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--g7)" title="${(r.comment||'').replace(/"/g,'&quot;')}">${r.comment||'-'}</td>
       <td><div style="display:flex;gap:4px">
         <button class="btn btn-out btn-sm btn-ico" onclick="editRec(${gi})">✏️</button>
         <button class="btn btn-red btn-sm btn-ico" onclick="delRec(${gi})">🗑️</button>
@@ -952,7 +959,7 @@ function renderTable(){
     </tr>`}).join(''):`<tr><td colspan="10" style="text-align:center;padding:28px;color:var(--g3)">Tidak ada data yang cocok</td></tr>`;
 
   const tp=Math.ceil(filteredData.length/pgSz)||1;
-  set('pgInfo','Menampilkan '+Math.min(st+1,filteredData.length)+'–'+Math.min(st+pgSz,filteredData.length)+' dari '+filteredData.length.toLocaleString('id')+' data');
+  set('pgInfo','Menampilkan '+Math.min(st+1,filteredData.length)+'-'+Math.min(st+pgSz,filteredData.length)+' dari '+filteredData.length.toLocaleString('id')+' data');
   const rng=2;let btns='';
   if(curPage>1)btns+=`<button class="pb" onclick="goP(${curPage-1})">‹</button>`;
   for(let p=Math.max(1,curPage-rng);p<=Math.min(tp,curPage+rng);p++)btns+=`<button class="pb ${p===curPage?'act':''}" onclick="goP(${p})">${p}</button>`;
@@ -992,7 +999,7 @@ async function saveRec(){
   const rec={
     tanggal:(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear(),
     bulan:MONTHS[d.getMonth()],tahun:d.getFullYear(),
-    customer:document.getElementById('aCust').value||'—',
+    customer:document.getElementById('aCust').value||'-',
     caseId:document.getElementById('aCaseId').value||randId(),
     rating:document.getElementById('aRating').value,
     agent:document.getElementById('aAgent').value,
@@ -1005,7 +1012,7 @@ async function saveRec(){
   closeM('mAdd');
   const bin2=getSbUrl(),key2=getSbKey();
   if(!bin2||!key2){
-    toast('⚠️ Data '+(editIdx>=0?'diperbarui':'ditambahkan')+' tapi belum terhubung Supabase — akan hilang saat refresh!');
+    toast('⚠️ Data '+(editIdx>=0?'diperbarui':'ditambahkan')+' tapi belum terhubung Supabase - akan hilang saat refresh!');
     buildFilters();applyF();
     return;
   }
@@ -1018,7 +1025,7 @@ async function delRec(idx){
   allData.splice(idx,1);
   const bin3=getSbUrl(),key3=getSbKey();
   if(!bin3||!key3){
-    toast('⚠️ Data dihapus tapi belum terhubung Supabase — akan muncul lagi saat refresh!');
+    toast('⚠️ Data dihapus tapi belum terhubung Supabase - akan muncul lagi saat refresh!');
     buildFilters();applyF();
     return;
   }
@@ -1141,7 +1148,7 @@ document.getElementById('impFile').addEventListener('change',function(){
     
     const prev=document.getElementById('impPrev');
     if(impBuf.length===0){
-      prev.textContent='⚠️ 0 baris berhasil dibaca. Header tidak cocok — cek format file.';
+      prev.textContent='⚠️ 0 baris berhasil dibaca. Header tidak cocok - cek format file.';
       prev.style.color='var(--red)';
     } else {
       prev.textContent='✅ '+impBuf.length+' baris siap diimport'+(skipped?' ('+skipped+' baris dilewati)':'')+'';
@@ -1175,12 +1182,42 @@ async function doImport(){
   if(saved){
     toast('✅ '+impBuf.length+' data diimport & tersimpan ke JSONBin! Total: '+allData.length);
   } else if(!bin||!key){
-    toast('⚠️ '+impBuf.length+' data diimport (sesi ini saja — belum terhubung JSONBin)');
+    toast('⚠️ '+impBuf.length+' data diimport (sesi ini saja - belum terhubung JSONBin)');
   }
   buildFilters();applyF();
 }
 
 // ── EXPORT CSV ────────────────────────────────────
+function downloadTemplate(){
+  var h=['Tanggal','Bulan','Tahun','Customer Name/No Hp','Case ID','Rating CSAT','Resolved Agent Name','Category Conversion','Comment/Feedback user (NPS)','Date Update','Feedback Category'];
+  var ex=[
+    ['5/1/2025','May','2025','081234567890','CASE001','5','Nur Muhamad Arif','Promoters','Pelayanan sangat memuaskan','May 25','Brand Advocates'],
+    ['5/2/2025','May','2025','Budi Santoso','CASE002','4','Muhammad Daud Wiseto','Promoters','Respon cepat dan ramah','May 25','Service Champions'],
+    ['5/3/2025','May','2025','Siti Rahayu','CASE003','3','Nurul Rizkiah','Passives','Cukup membantu','May 25','Service Observers'],
+    ['5/4/2025','May','2025','Andi Wijaya','CASE004','2','Ghaida Adnan Firas Fiddini','Detractors','Perlu peningkatan','May 25','Service Skeptics'],
+    ['5/5/2025','May','2025','Dewi Lestari','CASE005','5','Nur Muhamad Arif','Promoters','Sangat puas dengan layanannya','May 25','Brand Advocates'],
+  ];
+  var guide=[
+    ['--- PANDUAN PENGISIAN ---','','','','','','','','','',''],
+    ['FORMAT TANGGAL: M/D/YYYY  |  Contoh: 5/8/2025 = 8 Mei 2025','','','','','','','','','',''],
+    ['BULAN: January/February/March/April/May/June/July/August/September/October/November/December','','','','','','','','','',''],
+    ['TAHUN: 4 digit  |  Contoh: 2025','','','','','','','','','',''],
+    ['RATING CSAT: 1 / 2 / 3 / 4 / 5','','','','','','','','','',''],
+    ['CATEGORY: Promoters / Passives / Detractors / No Responder','','','','','','','','','',''],
+    ['FEEDBACK CATEGORY: Brand Advocates / Service Champions / Feature Lovers / Value Seekers / Service Observers / Lukewarm Users / Product Critics / Service Skeptics / Unkown','','','','','','','','','',''],
+  ];
+  function toRow(r){return r.map(function(v){return '"'+(v||'').replace(/"/g,'""')+'"';}).join(',');}
+  var rows=[toRow(h),'','--- CONTOH DATA ---'].concat(ex.map(toRow)).concat(['','--- PANDUAN ---']).concat(guide.map(toRow));
+  var csv=rows.join('\r\n');
+  var bom='\uFEFF';
+  var blob=new Blob([bom+csv],{type:'text/csv;charset=utf-8;'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='Template_NPS_CSAT.csv';
+  a.click();
+  toast('\uD83D\uDCCB Template CSV berhasil didownload!');
+}
+
 function exportCSV(){
   const hdr=['Tanggal','Bulan','Tahun','Customer Name/No Hp','Case ID','Rating CSAT','Resolved Agent Name','Category Conversion','Comment/Feedback user (NPS)','Date Update','Feedback Category'];
   const rows=filteredData.map(r=>[r.tanggal,r.bulan,r.tahun,r.customer,r.caseId,r.rating,r.agent,r.category,r.comment,r.dateUpdate,r.feedbackCategory].map(v=>'"'+(v||'').toString().replace(/"/g,'""')+'"').join(','));
@@ -1201,7 +1238,7 @@ function setArc(id,len,off){
   el.setAttribute('stroke-dashoffset',-off);
 }
 function catBadge(cat){
-  if(!cat)return'<span class="badge bn">—</span>';
+  if(!cat)return'<span class="badge bn">-</span>';
   if(cat==='Promoters')return'<span class="badge bp">😍 Promoters</span>';
   if(cat==='Passives')return'<span class="badge bpa">😐 Passives</span>';
   if(cat==='Detractors')return'<span class="badge bd">😠 Detractors</span>';
@@ -1240,7 +1277,7 @@ document.querySelectorAll('.modal-ov').forEach(ov=>ov.addEventListener('click',e
       toast('✅ '+allData.length.toLocaleString('id')+' data dimuat dari Supabase');
       return;
     }
-    toast('⚠️ Supabase gagal — menggunakan data bawaan sebagai fallback');
+    toast('⚠️ Supabase gagal - menggunakan data bawaan sebagai fallback');
   }
 
   // No Supabase or failed: use embedded B64 data
