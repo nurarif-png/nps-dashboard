@@ -471,8 +471,9 @@ function arrToObj(arr){
       const p=tanggal.split('/');
       if(p.length===3){
         try{
-          const _mi=parseInt(p[0])-1;
-          if(_mi>=0&&_mi<=11&&(!bulan||bulan==='undefined'))bulan=MONTHS[_mi];
+          const _first=parseInt(p[0]),_second=parseInt(p[1]);
+          const _mIdx=(_first>12)?_second-1:_first-1;
+          if((!bulan||bulan==='undefined')&&_mIdx>=0&&_mIdx<=11)bulan=MONTHS[_mIdx];
           if(!tahun||tahun==='undefined'||tahun==='')tahun=p[2]||tahun;
         }catch(e){}
       }
@@ -527,7 +528,7 @@ function rowToSb(r){
 function sbToRow(r){
   return{
     tanggal:r.tanggal||'',
-    bulan:r.bulan||'',
+    bulan:(function(){const _b=(r.bulan||'').trim();const _n=parseInt(_b);return(!isNaN(_n)&&_n>=1&&_n<=12)?['January','February','March','April','May','June','July','August','September','October','November','December'][_n-1]:_b;})(),
     tahun:r.tahun||'',
     customer:r.customer||'',
     caseId:r.case_id||'',
@@ -749,7 +750,11 @@ function applyF(){
   const sr=document.getElementById('fSearch').value.toLowerCase();
   filteredData=allData.filter(d=>{
     if(yr&&String(d.tahun).trim()!==yr)return false;
-    if(mo&&(d.bulan||'').trim().toLowerCase()!==mo.toLowerCase())return false;
+    if(mo){
+      let _bul=(d.bulan||'').trim();
+      const _bN=parseInt(_bul);if(!isNaN(_bN)&&_bN>=1&&_bN<=12)_bul=MONTHS[_bN-1];
+      if(_bul.toLowerCase()!==mo.toLowerCase())return false;
+    }
     if(ag&&d.agent!==ag)return false;
     if(ct&&d.category!==ct)return false;
     if(rt&&String(d.rating)!==rt)return false;
@@ -896,8 +901,30 @@ function updateCharts(){
   // Trend - fix undefined year/month
   const tMap={};
   d.forEach(r=>{
-    const mo=(r.bulan||'').trim();
-    const yr=String(r.tahun||'').trim();
+    let mo=(r.bulan||'').trim();
+    let yr=String(r.tahun||'').trim();
+    // Normalize numeric bulan "5" -> "May"
+    const _mNum=parseInt(mo);
+    if(!isNaN(_mNum)&&_mNum>=1&&_mNum<=12) mo=MONTHS[_mNum-1];
+    // Fallback: parse bulan & tahun dari field tanggal jika masih kosong
+    if((!mo||yr==='undefined'||yr==='')&&r.tanggal){
+      const _p=(r.tanggal||'').split('/');
+      if(_p.length===3){
+        const _f=parseInt(_p[0]),_s=parseInt(_p[1]);
+        const _mi=(_f>12)?_s-1:_f-1;
+        if(!mo&&_mi>=0&&_mi<=11)mo=MONTHS[_mi];
+        if(!yr||yr==='undefined'||yr==='')yr=_p[2]||'';
+      }
+      // Also try ISO format YYYY-MM-DD
+      if((!mo||!yr)&&r.tanggal.includes('-')&&r.tanggal.length>=10){
+        const _pts=r.tanggal.split('-');
+        if(_pts.length===3){
+          const _mi2=parseInt(_pts[1])-1;
+          if(!mo&&_mi2>=0&&_mi2<=11)mo=MONTHS[_mi2];
+          if(!yr)yr=_pts[0];
+        }
+      }
+    }
     if(!mo||!yr||yr==='undefined'||yr==='')return;
     const mi=MONTHS.indexOf(mo);
     if(mi<0)return;
