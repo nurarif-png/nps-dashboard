@@ -153,6 +153,7 @@ tr:hover td{background:var(--gw)}
 .toast{position:fixed;bottom:22px;right:22px;z-index:999;background:var(--gd);color:#fff;border-radius:var(--rs);padding:11px 18px;font-size:.82rem;font-weight:600;box-shadow:var(--shl);transform:translateY(80px);opacity:0;transition:all .3s cubic-bezier(.34,1.56,.64,1);max-width:320px;border-left:3px solid var(--gl)}
 .toast.show{transform:translateY(0);opacity:1}
 
+body{padding-bottom:32px}
 .loader{position:fixed;inset:0;background:rgba(240,250,245,.95);z-index:999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px}
 .spinner{width:38px;height:38px;border:3px solid var(--gp);border-top-color:var(--gb);border-radius:50%;animation:spin .7s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -1319,5 +1320,10 @@ document.querySelectorAll('.modal-ov').forEach(ov=>ov.addEventListener('click',e
   }
 })();
 </script>
+
+<!-- Credit -->
+<div style="position:fixed;bottom:0;left:0;right:0;background:linear-gradient(135deg,var(--gd),var(--gm));padding:6px 20px;text-align:center;font-size:.72rem;color:rgba(255,255,255,.7);font-family:'Plus Jakarta Sans',sans-serif;letter-spacing:.04em;z-index:50;border-top:1px solid rgba(255,255,255,.08)">
+  Dashboard build by <strong style="color:#fff;font-weight:700">Arif</strong> &nbsp;·&nbsp; Parkee CS Performance &nbsp;·&nbsp; <span style="opacity:.5">&copy; 2026</span>
+</div>
 </body>
 </html>
