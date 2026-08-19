@@ -576,11 +576,48 @@ async function loadFromSupabase(){
   }
 }
 
+async function insertRows(rows){
+  const url=getSbUrl(),key=getSbKey();
+  if(!url||!key)return false;
+  // Insert in batches of 500
+  const batchSize=500;
+  for(let i=0;i<rows.length;i+=batchSize){
+    const batch=rows.slice(i,i+batchSize).map(rowToSb);
+    const insRes=await fetch(`${url}/rest/v1/${SB_TABLE}`,{
+      method:'POST',headers:{...sbHeaders(),'Prefer':'return=minimal'},
+      body:JSON.stringify(batch)
+    });
+    if(!insRes.ok){
+      const err=await insRes.json().catch(()=>({}));
+      setSt('❌ Gagal insert batch '+(i/batchSize+1)+': '+(err.message||insRes.status));
+      return false;
+    }
+  }
+  return true;
+}
+
 async function saveAllToSupabase(){
   const url=getSbUrl(),key=getSbKey();
   if(!url||!key){toast('⚠️ Supabase belum dikonfigurasi!');return false;}
   setSt('🔄 Menyimpan semua data...');
   try{
+    // SAFETY GUARD: cek jumlah data di Supabase vs data di tampilan.
+    // Kalau DB lebih banyak, delete-all akan MENGHAPUS data yang tidak
+    // terlihat di dashboard (mis. dashboard masih fallback data lama).
+    let dbCount=0;
+    try{
+      const cntRes=await fetch(`${url}/rest/v1/${SB_TABLE}?select=id`,{
+        method:'HEAD',headers:{...sbHeaders(),'Prefer':'count=exact','Range':'0-0'}
+      });
+      const cr=cntRes.headers.get('content-range')||'';
+      const m=cr.match(/\/(\d+)$/);
+      if(m)dbCount=+m[1];
+    }catch(e){}
+    if(dbCount>allData.length){
+      const diff=dbCount-allData.length;
+      const okCnf=confirm('⚠️ PERHATIAN!\n\nData di Supabase ('+dbCount+' baris) lebih banyak dari data yang tampil di dashboard ini ('+allData.length+' baris, selisih '+diff+').\n\nMenyimpan sekarang akan MENGHAPUS '+diff+' baris dari database!\n\nKemungkinan dashboard ini belum memuat semua data (fallback data lama).\n\nTetap lanjut? (Rekomendasi: Batal, lalu refresh halaman)');
+      if(!okCnf){setSt('⛔ Dibatalkan - tidak ada perubahan');return false;}
+    }
     // Delete all existing rows first
     const delRes=await fetch(`${url}/rest/v1/${SB_TABLE}?id=gte.0`,{
       method:'DELETE',headers:sbHeaders()
@@ -591,20 +628,8 @@ async function saveAllToSupabase(){
         method:'DELETE',headers:sbHeaders()
       });
     }
-    // Insert all in batches of 500
-    const batchSize=500;
-    for(let i=0;i<allData.length;i+=batchSize){
-      const batch=allData.slice(i,i+batchSize).map(rowToSb);
-      const insRes=await fetch(`${url}/rest/v1/${SB_TABLE}`,{
-        method:'POST',headers:{...sbHeaders(),'Prefer':'return=minimal'},
-        body:JSON.stringify(batch)
-      });
-      if(!insRes.ok){
-        const err=await insRes.json().catch(()=>({}));
-        setSt('❌ Gagal insert batch '+(i/batchSize+1)+': '+(err.message||insRes.status));
-        return false;
-      }
-    }
+    const okIns=await insertRows(allData);
+    if(!okIns)return false;
     setSt('✅ Tersimpan: '+allData.length+' data');
     return true;
   }catch(e){setSt('❌ Error: '+e.message);return false;}
@@ -1036,29 +1061,81 @@ async function saveRec(){
     comment:document.getElementById('aComment').value||'No Comment',
     dateUpdate:MONTHS[d.getMonth()].slice(0,3)+' '+String(d.getFullYear()).slice(2)
   };
-  if(editIdx>=0)allData[editIdx]=rec;else allData.push(rec);
+  const isEdit=editIdx>=0;
+  const oldRec=isEdit?allData[editIdx]:null;
+  const sbId=oldRec?oldRec._sbId:null;
+  if(isEdit)allData[editIdx]=rec;else allData.push(rec);
   closeM('mAdd');
-  const bin2=getSbUrl(),key2=getSbKey();
-  if(!bin2||!key2){
-    toast('⚠️ Data '+(editIdx>=0?'diperbarui':'ditambahkan')+' tapi belum terhubung Supabase - akan hilang saat refresh!');
+  const url=getSbUrl(),key=getSbKey();
+  if(!url||!key){
+    toast('⚠️ Data '+(isEdit?'diperbarui':'ditambahkan')+' tapi belum terhubung Supabase - akan hilang saat refresh!');
     buildFilters();applyF();
     return;
   }
-  const saved2=await saveBin();
-  if(saved2)toast('✅ Data '+(editIdx>=0?'diperbarui':'ditambahkan')+' & tersimpan ke JSONBin!');
+  try{
+    let ok=false;
+    if(isEdit&&sbId){
+      // EDIT: PATCH by id saja - TIDAK menyentuh row lain
+      const res=await fetch(url+'/rest/v1/'+SB_TABLE+'?id=eq.'+sbId,{
+        method:'PATCH',headers:{...sbHeaders(),'Prefer':'return=minimal'},
+        body:JSON.stringify(rowToSb(rec))
+      });
+      ok=res.ok;
+      if(ok){rec._sbId=sbId;allData[editIdx]=rec;}
+    } else {
+      // ADD: INSERT 1 row baru saja
+      const res=await fetch(url+'/rest/v1/'+SB_TABLE,{
+        method:'POST',headers:{...sbHeaders(),'Prefer':'return=representation'},
+        body:JSON.stringify(rowToSb(rec))
+      });
+      ok=res.ok;
+      if(ok){
+        const inserted=await res.json().catch(()=>[]);
+        if(Array.isArray(inserted)&&inserted.length>0&&inserted[0].id){
+          const nid=inserted[0].id;
+          rec._sbId=nid;
+          if(isEdit)allData[editIdx]=rec;else allData[allData.length-1]=rec;
+        }
+      }
+    }
+    if(ok){
+      toast('✅ Data '+(isEdit?'diperbarui':'ditambahkan')+' & tersimpan ke Supabase!');
+    } else {
+      toast('⚠️ Gagal menyimpan ke Supabase! Cek koneksi/key.');
+    }
+  }catch(e){
+    toast('❌ Gagal: '+e.message);
+  }
   buildFilters();applyF();
 }
 async function delRec(idx){
   if(!confirm('Hapus data ini?'))return;
+  const r=allData[idx];
+  const sbId=r?r._sbId:null;
   allData.splice(idx,1);
-  const bin3=getSbUrl(),key3=getSbKey();
-  if(!bin3||!key3){
+  const url=getSbUrl(),key=getSbKey();
+  if(!url||!key){
     toast('⚠️ Data dihapus tapi belum terhubung Supabase - akan muncul lagi saat refresh!');
     buildFilters();applyF();
     return;
   }
-  const saved3=await saveBin();
-  if(saved3)toast('🗑️ Data dihapus & tersimpan ke JSONBin!');
+  if(sbId){
+    try{
+      // DELETE by id saja - TIDAK menghapus semua data
+      const res=await fetch(url+'/rest/v1/'+SB_TABLE+'?id=eq.'+sbId,{
+        method:'DELETE',headers:sbHeaders()
+      });
+      if(res.ok||res.status===404){
+        toast('🗑️ Data dihapus dari Supabase!');
+      } else {
+        toast('⚠️ Gagal hapus di Supabase (status '+res.status+')! Data tetap dihapus di tampilan.');
+      }
+    }catch(e){
+      toast('❌ Gagal hapus: '+e.message);
+    }
+  } else {
+    toast('⚠️ Data dihapus dari tampilan (belum ada di Supabase).');
+  }
   buildFilters();applyF();
 }
 
@@ -1203,14 +1280,31 @@ async function doImport(){
   }
   const mode=document.getElementById('impMode').value;
   const prevCount=allData.length;
-  if(mode==='replace')allData=impBuf;else allData=[...allData,...impBuf];
   closeM('mImport');
-  const added=allData.length-prevCount;
-  const saved=await saveBin();
-  if(saved){
-    toast('✅ '+impBuf.length+' data diimport & tersimpan ke JSONBin! Total: '+allData.length);
-  } else if(!bin||!key){
-    toast('⚠️ '+impBuf.length+' data diimport (sesi ini saja - belum terhubung JSONBin)');
+  let saved=false;
+  if(!bin||!key){
+    // Local only - no Supabase
+    if(mode==='replace')allData=impBuf;else allData=[...allData,...impBuf];
+    toast('⚠️ '+impBuf.length+' data diimport (sesi ini saja - belum terhubung Supabase)');
+    buildFilters();applyF();
+    return;
+  }
+  if(mode==='replace'){
+    // Replace: ganti semua (delete-all + insert) - dengan safety guard dari saveAllToSupabase
+    allData=impBuf;
+    saved=await saveAllToSupabase();
+    if(saved)toast('✅ '+impBuf.length+' data menggantikan semua data lama! Total: '+allData.length);
+    else toast('❌ Gagal import (replace). Data lama AMAN - tidak dihapus.');
+  } else {
+    // Append: INSERT saja data baru - TIDAK menyentuh data lama
+    const ok=await insertRows(impBuf);
+    if(ok){
+      allData=[...allData,...impBuf];
+      saved=true;
+      toast('✅ '+impBuf.length+' data ditambahkan ke Supabase! Total: '+allData.length);
+    } else {
+      toast('❌ Gagal import (append). Tidak ada data yang diubah.');
+    }
   }
   buildFilters();applyF();
 }
