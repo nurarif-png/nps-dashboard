@@ -584,13 +584,20 @@ async function insertRows(rows){
   for(let i=0;i<rows.length;i+=batchSize){
     const batch=rows.slice(i,i+batchSize).map(rowToSb);
     const insRes=await fetch(`${url}/rest/v1/${SB_TABLE}`,{
-      method:'POST',headers:{...sbHeaders(),'Prefer':'return=minimal'},
+      method:'POST',headers:{...sbHeaders(),'Prefer':'return=representation'},
       body:JSON.stringify(batch)
     });
     if(!insRes.ok){
       const err=await insRes.json().catch(()=>({}));
       setSt('❌ Gagal insert batch '+(i/batchSize+1)+': '+(err.message||insRes.status));
       return false;
+    }
+    // Attach returned IDs ke rows asli biar bisa di-edit/hapus by id nanti
+    const inserted=await insRes.json().catch(()=>[]);
+    if(Array.isArray(inserted)){
+      for(let j=0;j<inserted.length&&(i+j)<rows.length;j++){
+        if(inserted[j]&&inserted[j].id)rows[i+j]._sbId=inserted[j].id;
+      }
     }
   }
   return true;
@@ -1064,10 +1071,12 @@ async function saveRec(){
   const isEdit=editIdx>=0;
   const oldRec=isEdit?allData[editIdx]:null;
   const sbId=oldRec?oldRec._sbId:null;
-  if(isEdit)allData[editIdx]=rec;else allData.push(rec);
+  const oldSnapshot=oldRec?Object.assign({},oldRec):null;
   closeM('mAdd');
   const url=getSbUrl(),key=getSbKey();
   if(!url||!key){
+    // Local only: update tampilan, tidak sentuh Supabase
+    if(isEdit)allData[editIdx]=rec;else allData.push(rec);
     toast('⚠️ Data '+(isEdit?'diperbarui':'ditambahkan')+' tapi belum terhubung Supabase - akan hilang saat refresh!');
     buildFilters();applyF();
     return;
@@ -1081,7 +1090,15 @@ async function saveRec(){
         body:JSON.stringify(rowToSb(rec))
       });
       ok=res.ok;
-      if(ok){rec._sbId=sbId;allData[editIdx]=rec;}
+      if(ok){
+        rec._sbId=sbId;
+        allData[editIdx]=rec; // update UI HANYA setelah save sukses
+      }
+    } else if(isEdit&&!sbId){
+      // Data tanpa ID Supabase (mis. hasil import lama) - jangan INSERT duplikat
+      allData[editIdx]=rec; // update lokal saja
+      ok=true;
+      toast('⚠️ Data diperbarui di tampilan, tapi belum tersimpan ke Supabase (data ini tidak punya ID).');
     } else {
       // ADD: INSERT 1 row baru saja
       const res=await fetch(url+'/rest/v1/'+SB_TABLE,{
@@ -1092,19 +1109,23 @@ async function saveRec(){
       if(ok){
         const inserted=await res.json().catch(()=>[]);
         if(Array.isArray(inserted)&&inserted.length>0&&inserted[0].id){
-          const nid=inserted[0].id;
-          rec._sbId=nid;
-          if(isEdit)allData[editIdx]=rec;else allData[allData.length-1]=rec;
+          rec._sbId=inserted[0].id;
+          allData.push(rec);
+        } else {
+          allData.push(rec);
         }
       }
     }
     if(ok){
       toast('✅ Data '+(isEdit?'diperbarui':'ditambahkan')+' & tersimpan ke Supabase!');
     } else {
-      toast('⚠️ Gagal menyimpan ke Supabase! Cek koneksi/key.');
+      // Gagal - rollback UI biar konsisten dengan DB
+      if(isEdit&&oldSnapshot)allData[editIdx]=oldSnapshot;
+      toast('⚠️ Gagal menyimpan ke Supabase! Data tidak diubah.');
     }
   }catch(e){
-    toast('❌ Gagal: '+e.message);
+    if(isEdit&&oldSnapshot)allData[editIdx]=oldSnapshot;
+    toast('❌ Gagal: '+e.message+' - Data tidak diubah.');
   }
   buildFilters();applyF();
 }
@@ -1112,9 +1133,10 @@ async function delRec(idx){
   if(!confirm('Hapus data ini?'))return;
   const r=allData[idx];
   const sbId=r?r._sbId:null;
-  allData.splice(idx,1);
   const url=getSbUrl(),key=getSbKey();
   if(!url||!key){
+    // Local only: hapus dari tampilan
+    allData.splice(idx,1);
     toast('⚠️ Data dihapus tapi belum terhubung Supabase - akan muncul lagi saat refresh!');
     buildFilters();applyF();
     return;
@@ -1126,15 +1148,17 @@ async function delRec(idx){
         method:'DELETE',headers:sbHeaders()
       });
       if(res.ok||res.status===404){
-        toast('🗑️ Data dihapus dari Supabase!');
+        allData.splice(idx,1); // hapus dari tampilan HANYA setelah sukses di DB
+        toast('🗑️ 1 data dihapus dari Supabase!');
       } else {
-        toast('⚠️ Gagal hapus di Supabase (status '+res.status+')! Data tetap dihapus di tampilan.');
+        toast('⚠️ Gagal hapus di Supabase (status '+res.status+')! Data tidak dihapus.');
       }
     }catch(e){
-      toast('❌ Gagal hapus: '+e.message);
+      toast('❌ Gagal hapus: '+e.message+' - Data tidak dihapus.');
     }
   } else {
-    toast('⚠️ Data dihapus dari tampilan (belum ada di Supabase).');
+    allData.splice(idx,1);
+    toast('⚠️ Data dihapus dari tampilan (tidak punya ID Supabase).');
   }
   buildFilters();applyF();
 }
